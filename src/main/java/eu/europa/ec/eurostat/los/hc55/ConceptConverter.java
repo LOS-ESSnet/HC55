@@ -3,9 +3,9 @@ package eu.europa.ec.eurostat.los.hc55;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.List;
-
-import javax.xml.parsers.ParserConfigurationException;
+import java.util.Map;
 
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.rdf.model.ModelFactory;
@@ -23,7 +23,6 @@ import org.jdom2.filter.Filters;
 import org.jdom2.input.SAXBuilder;
 import org.jdom2.xpath.XPathExpression;
 import org.jdom2.xpath.XPathFactory;
-import org.xml.sax.SAXException;
 
 /**
  * The <code>ConceptConverter</code> class allows to convert a SDMX set of concepts into a SKOS concept scheme.
@@ -34,26 +33,11 @@ public class ConceptConverter {
 
 	private static Logger logger = LogManager.getLogger(ConceptConverter.class);
 
-	private Document csDocument = null;
-
-	public static void main(String[] args) throws ParserConfigurationException, SAXException, IOException, JDOMException {
+	public static void main(String[] args) throws Exception {
 
 		ConceptConverter reader = new ConceptConverter();
-		reader.readDocument();
-		Model ageModel = reader.convertConceptScheme("CENSUSHUB_CONCEPTS");
-		RDFDataMgr.write(new FileOutputStream("src/main/resources/data/cs-census-hub.ttl"), ageModel, Lang.TURTLE);
-	}
-
-	/**
-	 * Reads the SDMX file containing the concepts into a JDOM document.
-	 * 
-	 * @throws JDOMException In case of error while parsing the file content.
-	 * @throws IOException In case of problem reading the SDMX file.
-	 */
-	private void readDocument() throws JDOMException, IOException {
-
-		SAXBuilder jdomBuilder = new SAXBuilder();
-		csDocument = jdomBuilder.build(new File(Configuration.CONCEPTS));
+		Model conceptModel = reader.convertConceptScheme("CENSUSHUB_CONCEPTS");
+		RDFDataMgr.write(new FileOutputStream("src/main/resources/data/cs-census-hub.ttl"), conceptModel, Lang.TURTLE);
 	}
 
 	/**
@@ -61,8 +45,13 @@ public class ConceptConverter {
 	 * 
 	 * @param conceptSchemeId The identifier of the concept scheme in the input SDMX file.
 	 * @return The SKOS concept scheme as a Jena model.
+	 * @throws IOException IOException In case of problem reading the SDMX file.
+	 * @throws JDOMException JDOMException In case of error while parsing the file content.
 	 */
-	public Model convertConceptScheme(String conceptSchemeId) {
+	public Model convertConceptScheme(String conceptSchemeId) throws JDOMException, IOException {
+
+		SAXBuilder jdomBuilder = new SAXBuilder();
+		Document csDocument = jdomBuilder.build(new File(Configuration.CONCEPTS));
 
 		// Define and execute the XQuery expression that will select the code lists with the requested identifier
 		String query = "//*[(local-name(.) = 'ConceptScheme') and (@id= '" + conceptSchemeId + "')]";
@@ -103,5 +92,29 @@ public class ConceptConverter {
 		}
 		logger.info("Concept scheme conversion to SKOS finished, returning resulting model");
 		return csModel;
+	}
+
+	/**
+	 * Returns the list of concepts that have a (coded) core representation, with the names of the code lists.
+	 * 
+	 * @return A map where keys are the concept identifiers and the values the code list identifiers.
+	 * @throws IOException IOException In case of problem reading the SDMX file.
+	 * @throws JDOMException JDOMException In case of error while parsing the file content.
+	 */
+	public Map<String, String> getCodedConcepts() throws JDOMException, IOException {
+
+		SAXBuilder jdomBuilder = new SAXBuilder();
+		Document csDocument = jdomBuilder.build(new File(Configuration.CONCEPTS));
+
+		// Define and execute the XQuery expression that will select the concepts which have a core coded representation
+		// NB: concepts from all concept schemes are selected: if a concept has several code list, the last is returned
+		String query = "//*[(local-name(.) = 'Concept') and (@coreRepresentation)]";
+		XPathExpression<Element> expression = XPathFactory.instance().compile(query, Filters.element());
+		List<Element> selectedConcepts = expression.evaluate(csDocument);
+
+		Map<String, String> codedConcepts = new HashMap<String, String>();
+		for (Element concept : selectedConcepts) codedConcepts.put(concept.getAttributeValue("id"), concept.getAttributeValue("coreRepresentation"));
+
+		return codedConcepts;
 	}
 }

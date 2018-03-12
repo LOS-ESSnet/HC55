@@ -21,6 +21,9 @@ public class Configuration {
 	/** Name of the file containing the Census Hub concepts */
 	public final static String CONCEPTS = "src/main/resources/data/CENSUSHUB_CONCEPTS+ESTAT+1.0.xml";
 
+	/** Identifier of the generic concept scheme for the Census Hub */
+	public final static String CH_CONCEPT_SCHEME_ID = "CENSUSHUB_CONCEPTS";
+
 	public static final String BASE_URI = "http://linked-open-statistics.org/metadata/";
 	public static Namespace sdmxStructureNS = Namespace.getNamespace("structure", "http://www.SDMX.org/resources/SDMXML/schemas/v2_0/structure");
 
@@ -31,6 +34,10 @@ public class Configuration {
 
 	public static String conceptURI(String conceptSchemeId, String conceptId) {
 		return BASE_URI + "concepts/" + componentName(conceptSchemeId.toLowerCase()) + "/" + componentName(conceptId.toLowerCase());
+	}
+
+	public static String conceptURI(String conceptId) {
+		return conceptURI(CH_CONCEPT_SCHEME_ID, conceptId);
 	}
 
 	public static String codeListURI(String codeListId, String codeListName) {

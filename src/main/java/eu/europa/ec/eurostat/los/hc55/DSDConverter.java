@@ -8,16 +8,16 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import javax.xml.parsers.ParserConfigurationException;
-
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.rdf.model.ModelFactory;
 import org.apache.jena.rdf.model.Property;
 import org.apache.jena.rdf.model.Resource;
+import org.apache.jena.rdf.model.StmtIterator;
 import org.apache.jena.riot.Lang;
 import org.apache.jena.riot.RDFDataMgr;
 import org.apache.jena.vocabulary.RDF;
 import org.apache.jena.vocabulary.RDFS;
+import org.apache.jena.vocabulary.SKOS;
 import org.apache.jena.vocabulary.XSD;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -28,7 +28,6 @@ import org.jdom2.filter.Filters;
 import org.jdom2.input.SAXBuilder;
 import org.jdom2.xpath.XPathExpression;
 import org.jdom2.xpath.XPathFactory;
-import org.xml.sax.SAXException;
 
 import eu.europa.ec.eurostat.los.utils.DataCube;
 
@@ -58,26 +57,11 @@ public class DSDConverter {
 		componentPropertyMappings.put("Attribute", DataCube.attribute);
 	}
 
-	private Document dsdDocument = null;
+	public static void main(String[] args) throws Exception {
 
-	public static void main(String[] args) throws ParserConfigurationException, SAXException, IOException, JDOMException {
-
-		DSDConverter reader = new DSDConverter();
-		reader.readDocument();
-		Model hc55DSDModel = reader.getDSD("HC55", new ArrayList<String>());
+		DSDConverter dsdConverter = new DSDConverter();
+		Model hc55DSDModel = dsdConverter.convertDSD("HC55", new ArrayList<String>());
 		RDFDataMgr.write(new FileOutputStream("src/main/resources/data/dsd-hc55.ttl"), hc55DSDModel, Lang.TURTLE);
-	}
-
-	/**
-	 * Reads the SDMX file into a JDOM document.
-	 * 
-	 * @throws JDOMException In case of error while parsing the file content.
-	 * @throws IOException In case of problem reading the SDMX file.
-	 */
-	private void readDocument() throws JDOMException, IOException {
-
-		SAXBuilder jdomBuilder = new SAXBuilder();
-		dsdDocument = jdomBuilder.build(new File(Configuration.KEY_FAMILIES));
 	}
 
 	/**
@@ -86,8 +70,19 @@ public class DSDConverter {
 	 * @param dsdId The identifier of the key family in the input SDMX file.
 	 * @param excludedComponents List of identifiers of components that will not be included in the DSD.
 	 * @return The Data Cube data structure definition as a Jena model.
+	 * @throws IOException In case of problem reading the SDMX file.
+	 * @throws JDOMException In case of error while parsing the file content.
 	 */
-	public Model getDSD(String dsdId, List<String> excludedComponents) {
+	public Model convertDSD(String dsdId, List<String> excludedComponents) throws JDOMException, IOException {
+
+		SAXBuilder jdomBuilder = new SAXBuilder();
+		Document dsdDocument = jdomBuilder.build(new File(Configuration.KEY_FAMILIES));
+
+		// We will need the Census Hub concepts in order to link components to concepts and give them better names
+		ConceptConverter conceptConverter = new ConceptConverter();
+		Model conceptModel = conceptConverter.convertConceptScheme(Configuration.CH_CONCEPT_SCHEME_ID);
+		// And we will also need the list of concepts which are coded
+		Map<String, String> codedConcepts = conceptConverter.getCodedConcepts();
 
 		// Define and execute the XQuery expression that will select the code lists with the requested identifier
 		String query = "//*[(local-name(.) = 'KeyFamily') and (@id= '" + dsdId + "')]";
@@ -131,6 +126,23 @@ public class DSDConverter {
 			String propertyURI = Configuration.componentURI(conceptIdentifier, componentType);
 			Resource componentPropertyClass = dsdModel.createResource(propertyURI, componentClassMappings.get(componentType));
 			componentPropertyClass.addProperty(RDF.type, RDF.Property);
+			if ((conceptIdentifier != null) && (conceptIdentifier.length() > 0)) {
+				String conceptURI = Configuration.conceptURI(conceptIdentifier);
+				Resource conceptResource = conceptModel.createResource(conceptURI);
+				componentPropertyClass.addProperty(DataCube.concept, conceptResource);
+				StmtIterator conceptLabels = conceptModel.listStatements(conceptResource, SKOS.prefLabel, null, "en");
+				if (conceptLabels.hasNext()) {
+					String conceptLabel = conceptLabels.next().getString();
+					componentPropertyClass.addProperty(RDFS.label, dsdModel.createLiteral(conceptLabel, "en"));
+				}
+				conceptLabels.close(); // TODO Deal with the case where there are labels in different languages
+				// If the concept has a coded core representation, the component property is also a coded property
+				if (codedConcepts.containsKey(conceptIdentifier)) {
+					componentPropertyClass.addProperty(RDF.type, DataCube.CodedProperty);
+					componentPropertyClass.addProperty(DataCube.codeList, dsdModel.createResource(Configuration.codeListURI(codedConcepts.get(conceptIdentifier), null)));
+				}
+			}
+
 			// Attach the property to the DSD via an anonymous ComponentSpecification node
 			Resource blankCS = dsdModel.createResource(DataCube.ComponentSpecification).addProperty(componentPropertyMappings.get(componentType), componentPropertyClass);
 			// For dimensions, add the order attribute
@@ -141,6 +153,7 @@ public class DSDConverter {
 			dsdResource.addProperty(DataCube.component, blankCS);
 		}
 
+		conceptModel.close();
 		return dsdModel;
 	}
 }
